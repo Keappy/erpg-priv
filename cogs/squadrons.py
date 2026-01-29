@@ -85,6 +85,33 @@ class SquadronManager(commands.Cog):
 
     # --- COMMANDS ---
 
+    @commands.command(name="squad", aliases=["mysquads"])
+    async def squad(self, ctx):
+        """Tells the user which squadron channel they belong to with clickable links."""
+        user_id = ctx.author.id
+        found_squads = []
+
+        # Access the squadrons dictionary from your data
+        squads = self.data.get("squadrons", {})
+
+        # Search through all saved squadrons
+        # k is the channel_id, v is the squad data dictionary
+        for channel_id, squad_info in squads.items():
+            owner_id = squad_info.get("owner_id")
+            members = squad_info.get("members", [])
+
+            # Check if user is owner or in the member list
+            # We convert to int just in case they are stored as strings in JSON
+            if int(owner_id) == user_id or any(int(m) == user_id for m in members):
+                # Format as <#ID> to make it a clickable blue link
+                found_squads.append(f"<#{channel_id}>")
+
+        if found_squads:
+            channels_str = ", ".join(found_squads)
+            await ctx.send(f"👥 {ctx.author.mention}, you are in these squadrons: {channels_str}")
+        else:
+            await ctx.send(f"❌ {ctx.author.mention}, you aren't in any squadrons yet.")
+
     @commands.command(hidden=True)
     async def viewsquadrons(self, ctx):
         """Moderator only: Lists all active squadron channels."""
@@ -214,7 +241,10 @@ class SquadronManager(commands.Cog):
       await self.update_permissions(new_channel, hide=True)
       
       # Quality change: Send success in public channel, send showlist in private channel
-      await ctx.send(f"✅ Squadron **{name}** created! <#{new_channel.id}>")
+      await ctx.send(
+            f"✅ Squadron **{name}** created for {ctx.author.mention}!\n"
+            f"🚀 Go to your channel here: {new_channel.mention}"
+        )
       
       # Automatically send showlist in the NEW channel
       embed = await self.get_squad_embed(new_channel.id)

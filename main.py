@@ -28,6 +28,11 @@ class Bot(commands.Bot):
             with open(self.data_file, "r") as f:
                 return json.load(f)
         return {"server_configs": {"global": {}}, "squadrons": {}}
+    
+    def reload_data(self):
+        """Reloads the JSON file back into the bot's memory."""
+        self.squad_data = self.load_data()
+        return self.squad_data
 
     def save_data(self, data=None):
         # If no data passed, save the internal squad_data
@@ -59,6 +64,13 @@ async def reload(ctx, extension: str):
     except Exception as e:
         await ctx.send(f"❌ Error: `{e}`")
 
+@client.command()
+@commands.is_owner()
+async def reloadjson(ctx):
+    """Force reloads the JSON file without restarting the bot."""
+    client.reload_data()
+    await ctx.send(f"🔄 Data from `{DATA_FILE}` has been re-synced to the bot!")
+
 @client.command(hidden=True)
 @commands.has_permissions(administrator=True)
 async def reloadall(ctx):
@@ -68,6 +80,9 @@ async def reloadall(ctx):
     for ext in extensions:
         try:
             await client.reload_extension(f"cogs.{ext}")
+            """Force reloads the JSON file without restarting the bot."""
+            client.reload_data()
+            await ctx.send(f"🔄 Data from `{DATA_FILE}` has been re-synced to the bot!")
             results.append(f"✅ {ext}")
         except Exception as e:
             results.append(f"❌ {ext} (Error: {e})")
