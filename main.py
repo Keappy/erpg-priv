@@ -79,7 +79,14 @@ async def reloadall(ctx):
     results = []
     for ext in extensions:
         try:
+<<<<<<< HEAD
             await client.reload_extension(f"cogs.{ext}")    
+=======
+            await client.reload_extension(f"cogs.{ext}")
+            """Force reloads the JSON file without restarting the bot."""
+            client.reload_data()
+            await ctx.send(f"🔄 Data from `{DATA_FILE}` has been re-synced to the bot!")
+>>>>>>> 1eaa76d607edfbb8a2a014757df810ccdce2af1b
             results.append(f"✅ {ext}")
         except Exception as e:
             results.append(f"❌ {ext} (Error: {e})")
