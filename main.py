@@ -79,7 +79,7 @@ async def reloadall(ctx):
     results = []
     for ext in extensions:
         try:
-            await client.reload_extension(f"cogs.{ext}")    
+            await client.reload_extension(f"cogs.{ext}")
             results.append(f"✅ {ext}")
         except Exception as e:
             results.append(f"❌ {ext} (Error: {e})")

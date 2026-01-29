@@ -19,6 +19,7 @@ class CustomHelp(commands.HelpCommand):
         embed.add_field(name="👥 Squadron Management", value=management, inline=False)
 
         access = (
+            f"`{prefix}squad` - Tells the user which squadron channel they belong to\n"
             f"`{prefix}allow [@user]` - Grant access\n"
             f"`{prefix}deny [@user]` - Remove access\n"
             f"`{prefix}hide` / `{prefix}unhide` - Toggle visibility"
