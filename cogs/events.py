@@ -15,99 +15,87 @@ class EventTracker(commands.Cog):
         role_id = roles.get(event_type)
         return f"<@&{role_id}>" if role_id else "@everyone"
 
-    @commands.Cog.listener()
-    async def on_message(self, message):
-        await self.check_rpg_events(message)
-
-    @commands.Cog.listener()
-    async def on_message_edit(self, before, after):
-        await self.check_rpg_events(after)
-
     def get_event_config(self, event_type):
-        """Pulls both the role ID and custom message from the new JSON config."""
-        # Navigate to the new event_configs section
         configs = self.data.get("server_configs", {}).get("global", {}).get("event_configs", {})
         event_cfg = configs.get(event_type)
         
         if event_cfg:
-            message = event_cfg['msg']
-            return message
+            return event_cfg['msg']
+        
+        # Simple string fallback
+        return f"⚠️ {event_type.upper()} started (Config missing)!"
         
         # Fallback if event is missing from config
         return "No Role Configured", f"{event_type.upper()} started!"
 
     async def check_rpg_events(self, message):
         cfg = self.data.get("server_configs", {}).get("global", {})
-        # Verify message is from RPG bots
         if message.author.id not in [cfg.get("EPIC_RPG_ID"), cfg.get("IDLE_FARM_ID")]:
             return
 
         event_type, is_starting, is_ending = self.parse_buttons(message)
-        if not event_type:
-            return
+        if not event_type: return
 
         now = time.time()
         chan_id_str = str(message.channel.id)
         chan_ev_key = f"{chan_id_str}_{event_type}"
         squad = self.data.get("squadrons", {}).get(chan_id_str)
 
-        # --- PHASE 1: THE PING (UNIVERSAL) ---
+        if not squad: return # Only run logic for registered squads
+
+        if "active_events" not in squad:
+            squad["active_events"] = []
+
+        # --- PHASE 1: EVENT START ---
         if is_starting:
-            # Prevent double-pings from message edits
-            if (now - self.last_event_time.get(f"start_{chan_ev_key}", 0)) < 4:
-                return
+            if (now - self.last_event_time.get(f"start_{chan_ev_key}", 0)) < 4: return
             self.last_event_time[f"start_{chan_ev_key}"] = now
             
-            # GET NEW CONFIG DATA
+            # Add to active list
+            if event_type not in squad["active_events"]:
+                squad["active_events"].append(event_type)
+                self.save_data(self.data)
+
+            # Announce the event
             custom_msg = self.get_event_config(event_type)
-            
-            # Send the Navi-style formatted message
             await message.channel.send(f"🔔 {custom_msg}")
 
-        # --- PHASE 2: SQUADRON PERMISSIONS ---
-        # Only runs if the channel is a registered squadron
-        if squad:
-            if "active_events" not in squad:
-                squad["active_events"] = []
+            # UNHIDE LOGIC: Unhide if Auto-unhide is ON and it's NOT in Squad-Only (Permanent Lock) mode
+            if squad.get("events_enabled", True) and not squad.get("squad_only_mode", False):
+                manager = self.bot.get_cog("SquadronManager")
+                if manager:
+                    await manager.update_permissions(message.channel, hide=False)
 
-            if is_starting:
-                if event_type not in squad["active_events"]:
-                    squad["active_events"].append(event_type)
-                    self.save_data(self.data)
+        # --- PHASE 2: EVENT END ---
+        elif is_ending:
+            if (now - self.last_event_time.get(f"end_{chan_ev_key}", 0)) < 2: return
+            self.last_event_time[f"end_{chan_ev_key}"] = now
 
-                # PERMISSION CHECK: 
-                # Should we unhide? Only if events_enabled=True AND squad_only=False
-                can_unhide = squad.get("events_enabled", True) and not squad.get("squad_only_mode", False)
+            if event_type in squad["active_events"]:
+                squad["active_events"].remove(event_type)
+                self.save_data(self.data)
+            
+            if len(squad["active_events"]) == 0:
+                is_manual_hidden = squad.get("is_hidden", True)
                 
-                if can_unhide:
+                if is_manual_hidden:
                     manager = self.bot.get_cog("SquadronManager")
                     if manager:
-                        await manager.update_permissions(message.channel, hide=False)
-                else:
-                    # If it's flagged OFF, we send a small note so they know why it's still hidden
-                    if squad.get("squad_only_mode"):
-                        await message.channel.send("ℹ️ *Squad-Only mode is ON. Channel remains hidden.*", delete_after=5)
-                    elif not squad.get("events_enabled"):
-                        await message.channel.send("ℹ️ *Events unhide is OFF. Channel remains hidden.*", delete_after=5)
+                        # --- CHECK IF UNHIDE ACTUALLY HAPPENED ---
+                        # We only send the message if the channel is currently visible
+                        overwrites = message.channel.overwrites_for(message.guild.default_role)
+                        was_visible = overwrites.view_channel is True
 
-            elif is_ending:
-                if (now - self.last_event_time.get(f"end_{chan_ev_key}", 0)) < 2:
-                    return
-                self.last_event_time[f"end_{chan_ev_key}"] = now
-
-                if event_type in squad["active_events"]:
-                    squad["active_events"].remove(event_type)
-                    self.save_data(self.data)
-                
-                # HIDE LOGIC: Only hide if the list is finally empty
-                if len(squad["active_events"]) == 0:
-                    manager = self.bot.get_cog("SquadronManager")
-                    if manager:
                         await manager.update_permissions(message.channel, hide=True)
-                        await message.channel.send(f"🔒 **{event_type.upper()} ended. Channel hidden.**")
+                        
+                        # Only announce if it was actually visible to prevent spam
+                        if was_visible:
+                            await message.channel.send(f"🔒 **{event_type.upper()} ended. Channel hidden.**")
+                        else:
+                            # Just a quiet confirmation that the event is over
+                            await message.channel.send(f"✅ **{event_type.upper()}**")
                 else:
-                    remaining = ", ".join(squad["active_events"]).upper()
-                    await message.channel.send(f"✅ **{event_type.upper()} ended.** (Still active: {remaining})")
+                    await message.channel.send(f"✅ **{event_type.upper()} ended.**")
 
     def parse_buttons(self, message):
         """Detects event type and status via buttons, matching JSON keys."""

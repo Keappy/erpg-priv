@@ -189,25 +189,30 @@ class SquadronManager(commands.Cog):
 
     @commands.command()
     async def hide(self, ctx):
-        """Manually hides the channel."""
+        """Manually hides the channel and sets state to HIDDEN."""
         squad = self.data["squadrons"].get(str(ctx.channel.id))
         if not squad or not self.is_mod_or_owner(ctx, squad):
             return await ctx.send("❌ Access denied.")
         
+        squad["is_hidden"] = True # Set current state
+        self.save_data(self.data)
+        
         await self.update_permissions(ctx.channel, hide=True)
-        await ctx.send("🔒 **Channel manually hidden.**")
+        await ctx.send("🔒 **Channel manually hidden.** (State: Hidden)")
 
     @commands.command()
     async def unhide(self, ctx):
-        """Manually unhides the channel."""
+        """Manually unhides the channel and sets state to VISIBLE."""
         squad = self.data["squadrons"].get(str(ctx.channel.id))
         if not squad or not self.is_mod_or_owner(ctx, squad):
             return await ctx.send("❌ Access denied.")
         
+        squad["is_hidden"] = False # Set current state
+        self.save_data(self.data)
+        
         await self.update_permissions(ctx.channel, hide=False)
-        await ctx.send("🔓 **Channel manually unhidden.**")
-
-    @commands.command()
+        await ctx.send("🔓 **Channel manually unhidden.** (State: Visible)")    @commands.command()
+    
     async def clearactive(self, ctx):
         """Clears the active events list if it gets stuck."""
         squad = self.data["squadrons"].get(str(ctx.channel.id))
@@ -251,23 +256,32 @@ class SquadronManager(commands.Cog):
       await new_channel.send(f"Welcome to your new squadron, {ctx.author.mention}!", embed=embed)
 
     async def get_squad_embed(self, channel_id):
-        """Helper to build the showlist embed with the new footer."""
+        """Helper to build the showlist embed with visibility status."""
         squad = self.data["squadrons"].get(str(channel_id))
         if not squad: return None
-
+        
         owner = f"<@{squad['owner_id']}> (Owner)"
         members = "\n".join([f"<@{uid}>" for uid in squad["members"]]) if squad["members"] else "None"
         
+        # Logic for Status text
         event_status = "✅ Enabled" if squad.get("events_enabled", True) else "❌ Disabled"
-        squad_only = "🔒 ON (Always Hidden)" if squad.get("squad_only_mode", False) else "🔓 OFF (Default)"
+        
+        # Improved Squad-Only status text
+        if squad.get("squad_only_mode", False):
+            squad_only = "🔒 **ON** (Always Hidden)"
+        else:
+            squad_only = "🔓 **OFF** (Public after events)"
 
+        state_text = "🙈 Hidden" if squad.get("is_hidden", True) else "👁️ Visible"
+        
         embed = discord.Embed(
             title="👥 Squadron Information", 
             description=f"Settings and members for <#{channel_id}>",
             color=discord.Color.blue()
         )
-        embed.add_field(name="🔔 Event Unhide", value=event_status, inline=True)
+        embed.add_field(name="🔔 Event Auto-Unhide", value=event_status, inline=True)
         embed.add_field(name="🛡️ Squad-Only Mode", value=squad_only, inline=True)
+        embed.add_field(name="📍 Current State", value=state_text, inline=True)
         embed.add_field(name="⭐ Owner", value=owner, inline=False)
         embed.add_field(name="Members", value=members, inline=False)
         
@@ -275,12 +289,7 @@ class SquadronManager(commands.Cog):
         if active:
             embed.add_field(name="🔥 Active Events", value=active.upper(), inline=False)
 
-        # Quality change: Added the requested footer
-        prefix = self.bot.command_prefix
-        # If prefix is a list or callable, we just pick the first character or use '?'
-        display_prefix = prefix[0] if isinstance(prefix, (list, tuple)) else prefix
-        embed.set_footer(text=f"Find more commands with `help`")
-        
+        embed.set_footer(text="Use ?hide or ?unhide to toggle Current State")
         return embed
     
     @commands.command()
@@ -322,15 +331,43 @@ class SquadronManager(commands.Cog):
 
     @commands.command()
     async def squadonly(self, ctx, toggle: str):
+        """Toggles Squad-Only Mode (Always Hidden). Usage: ?squadonly on/off"""
         squad = self.data["squadrons"].get(str(ctx.channel.id))
+        
+        # 1. Permission Check
         if not squad or not self.is_mod_or_owner(ctx, squad):
-            return await ctx.send("❌ Access denied.")
+            return await ctx.send("❌ Access denied. This must be a squadron channel and you must be the owner/mod.")
 
-        state = toggle.lower() == "on"
+        # 2. Logic to determine True/False
+        if toggle.lower() in ["on", "yes", "true"]:
+            state = True
+        elif toggle.lower() in ["off", "no", "false"]:
+            state = False
+        else:
+            return await ctx.send("❓ Invalid input! Please use `?squadonly on` or `?squadonly off`.")
+
+        # 3. Save and Update
         squad["squad_only_mode"] = state
         self.save_data(self.data)
-        await ctx.send(f"Squad-Only Mode: {'🔒 **ON**' if state else '🔓 **OFF**'}")
+        
+        # If toggling ON, hide the channel immediately. 
+        # If toggling OFF, we leave it as is (it will unhide on next event or via ?unhide)
+        if state:
+            await self.update_permissions(ctx.channel, hide=True)
+            await ctx.send("🔒 **Squad-Only Mode: ON**. This channel will now remain hidden even during events.")
+        else:
+            await ctx.send("🔓 **Squad-Only Mode: OFF**. This channel will now unhide automatically when RPG events start.")
 
+    # --- ERROR HANDLER FOR SQUADONLY ---
+    @squadonly.error
+    async def squadonly_error(self, ctx, error):
+        if isinstance(error, commands.MissingRequiredArgument):
+            prefix = self.bot.command_prefix
+            await ctx.send(
+                f"❌ **Missing Argument!**\n"
+                f"Usage: `{prefix}squadonly <on/off>`\n"
+                f"Example: `{prefix}squadonly on` to keep the channel private at all times."
+            )
     @commands.command()
     async def rename(self, ctx, *, new_name: str):
         squad = self.data["squadrons"].get(str(ctx.channel.id))

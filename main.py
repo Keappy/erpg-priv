@@ -17,7 +17,8 @@ class Bot(commands.Bot):
         intents.guilds = True
         
         super().__init__(command_prefix='?', intents=intents, help_command=CustomHelp())
-        self.cogslist = {"squadrons", "events", "help", "config"}
+        # Inside your Bot class in main.py
+        self.cogslist = {"squadrons", "events", "help", "config", "listeners", "check_trades"}
         
         # --- ATTACH DATA TO CLIENT ---
         self.data_file = DATA_FILE
@@ -26,7 +27,20 @@ class Bot(commands.Bot):
     def load_data(self):
         if os.path.exists(self.data_file):
             with open(self.data_file, "r") as f:
-                return json.load(f)
+                data = json.load(f)
+            
+            # --- AUTO-FIX MISSING KEYS ---
+            changes_made = False
+            for squad_id, info in data.get("squadrons", {}).items():
+                if "is_hidden" not in info:
+                    info["is_hidden"] = True  # Default to hidden
+                    changes_made = True
+            
+            if changes_made:
+                self.save_data(data) # Save the repaired version
+                print("🛠️ Fixed missing 'is_hidden' keys in JSON.")
+                
+            return data
         return {"server_configs": {"global": {}}, "squadrons": {}}
     
     def reload_data(self):
@@ -41,7 +55,7 @@ class Bot(commands.Bot):
             json.dump(to_save, f, indent=4)
 
     async def setup_hook(self):
-        initial_extensions = ["cogs.squadrons", "cogs.events", "cogs.help", "cogs.config"]
+        initial_extensions = ["cogs.squadrons", "cogs.events", "cogs.help", "cogs.config", "cogs.listeners", "cogs.check_trades"]
         for ext in self.cogslist:
             await self.load_extension(f"cogs.{ext}")
         print(f"📂 Loaded: {', '.join(initial_extensions)}")
@@ -75,7 +89,7 @@ async def reloadjson(ctx):
 @commands.has_permissions(administrator=True)
 async def reloadall(ctx):
     """Reloads all active cogs."""
-    extensions = ["squadrons", "events", "help", "config"] 
+    extensions = ["squadrons", "events", "help", "config", "listeners", "check_trades"] 
     results = []
     for ext in extensions:
         try:

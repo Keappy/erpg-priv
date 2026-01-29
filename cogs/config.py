@@ -10,17 +10,17 @@ class ConfigView(discord.ui.View):
     @discord.ui.select(
         placeholder="Choose an event to configure...",
         options=[
-            discord.SelectOption(label="Arena", value="arena", emoji="<:epicrpgarena:697563611698298922>"),
-            discord.SelectOption(label="Coin Rain", value="catch", emoji="<:coin:557642215284015124>"),
-            discord.SelectOption(label="Lure", value="lure", emoji="<:normiefish:697940429999439872>"),
             discord.SelectOption(label="Rare Hunt", value="pickaxe", emoji="<:shinypickaxe:1357664482884845628>"),
-            discord.SelectOption(label="Legendary Boss", value="boss", emoji="<:memedragon:547517937314037789>"),
             discord.SelectOption(label="Lootbox", value="summon", emoji="<:EdgyLootbox:578728161550925834>"),
-            discord.SelectOption(label="Epic Tree", value="cut", emoji="<:woodenlog:770880739926999070>"),
+            discord.SelectOption(label="Catch", value="catch", emoji="<:coin:557642215284015124>"),
+            discord.SelectOption(label="Cut", value="cut", emoji="<:woodenlog:770880739926999070>"),
+            discord.SelectOption(label="Lure", value="lure", emoji="<:normiefish:697940429999439872>"),
+            discord.SelectOption(label="Arena", value="arena", emoji="<:epicrpgarena:697563611698298922>"),
+            discord.SelectOption(label="Miniboss", value="miniboss", emoji="🗡️"),
+            discord.SelectOption(label="Legendary Boss", value="boss", emoji="<:memedragon:547517937314037789>"),
             discord.SelectOption(label="Pack", value="pack", emoji="<:box:1100581772808429700>"),
             discord.SelectOption(label="Ohmmm", value="ohmmm", emoji="<:energy:1084593332312887396>"),
             discord.SelectOption(label="Lucky Rewards", value="lucky rewards", emoji="<:idlons:1086449232967372910>"),
-            discord.SelectOption(label="Miniboss", value="miniboss", emoji="🗡️"),
         ]
     )
     async def select_callback(self, interaction, select):
@@ -50,11 +50,25 @@ class GlobalSettings(commands.Cog):
         self.bot = bot
         self.data = squad_data
         self.save_data = save_func
+        
+        # Mapping for the Embed Display
+        self.event_emojis = {
+            "pickaxe": "<:shinypickaxe:1467073977749868699>",
+            "summon": "<:EdgyLootbox:1467082669560172584>",
+            "catch": "<:coin:1467075148241829943>",
+            "cut": "<:woodenlog:1467073428841304114>",
+            "lure": "<:normiefish:1467074208876986493>",
+            "arena": "<:epicrpgarena:1467071906812395682>",
+            "miniboss": "🗡️",
+            "boss": "<:memedragon:1467077272921047112>",
+            "pack": "<:box:1467083275922182187>",
+            "ohmmm": "<:energy:1467083714440859729>",
+            "lucky rewards": "<:idlons:1467083126512681094>"
+        }
 
     @commands.command(name="config")
     @commands.has_permissions(administrator=True)
     async def server_settings(self, ctx):
-        """Opens the global event configuration menu."""
         embed = discord.Embed(
             title="⚙️ Global Event Settings",
             description="Manage your squadron event pings and messages below.",
@@ -62,10 +76,17 @@ class GlobalSettings(commands.Cog):
         )
         
         configs = self.data["server_configs"]["global"].get("event_configs", {})
+        
         for event, details in configs.items():
+            # Get emoji from mapping, fallback to empty string if not found
+            emoji = self.event_emojis.get(event.lower(), "❓")
             role_mention = f"<@&{details['role']}>"
+            
+            # Applying emoji + EVENT NAME
+            field_name = f"{emoji} {event.upper()}"
+            
             embed.add_field(
-                name=event.upper(), 
+                name=field_name, 
                 value=f"**Role:** {role_mention}\n**Message:** {details['msg']}", 
                 inline=True
             )
