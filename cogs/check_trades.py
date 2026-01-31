@@ -8,6 +8,17 @@ class Trades(commands.Cog):
         self.bot = bot
         self.active_sessions = {}
 
+        self.dismantle_returns = {
+            "ultra log": ("hyper log", 10),
+            "hyper log": ("mega log", 10),
+            "mega log": ("super log", 10),
+            "super log": ("epic log", 10),
+            "epic log": ("wooden log", 25),
+            "banana": ("apple", 15),
+            "epic fish": ("golden fish", 100),
+            "golden fish": ("normie fish", 15)
+        }
+
         self.trade_ids = {
             "fish": "a", "apple": "c", "ruby": "e",
             "log_to_fish": "b", "log_to_apple": "d", "log_to_ruby": "f",
@@ -48,27 +59,38 @@ class Trades(commands.Cog):
     
     async def process_trade_logic(self, message):
         content = message.content.lower()
-        uid = message.author.id # The ID of whoever sent this message
+        uid = message.author.id
 
-        # 1. USER COMMAND: 'rpg p tr' (The Trigger)
-        if content.startswith("rpg p tr"):
-            # Create a unique session keyed by the USER'S ID
+        # 1. Trigger Session
+        if content.startswith("rpg p trd"):
             self.active_sessions[uid] = {
                 "user_id": uid,
                 "username": str(message.author.name).lower(),
-                "todo_list": [], 
-                "trade_list": [],
-                "logic_area": None, 
-                "real_area": 0,
+                "todo_list": [], "trade_list": [],
+                "logic_area": None, "real_area": 0,
                 "status": "WAITING_FOR_PROFILE",
                 "channel_id": message.channel.id,
                 "last_action": None,
                 "virtual_inv": {}
             }
-            # Optional: Add a small confirmation so the user knows they are tracked
             return
 
-        # 2. USER COMMANDS: Dismantle or Trade
+        # 2. Track USER Dismantle Commands
+        if uid in self.active_sessions:
+            if "rpg dismantle" in content:
+                session = self.active_sessions[uid]
+                session["last_action"] = "dismantle"
+                
+                # Logic: Find which item the user is dismantling
+                # Matches: "rpg dismantle mega log all" or "rpg dismantle mega log 5"
+                match = re.search(r"rpg dismantle\s+(.*?)\s+(all|\d+)", content)
+                if match:
+                    item_to_lose = match.group(1).strip()
+                    # We treat 'all' as removing whatever we have in virtual_inv
+                    session["virtual_inv"][item_to_lose] = 0 
+                    print(f"DEBUG: User dismantling {item_to_lose}. Virtual count set to 0.")
+
+        # 3. USER COMMANDS: Dismantle or Trade
         # We only track these if the user ALREADY has an active session
         if uid in self.active_sessions:
             if "rpg dismantle" in content:
@@ -76,10 +98,21 @@ class Trades(commands.Cog):
             elif "rpg trade" in content:
                 self.active_sessions[uid]["last_action"] = "trade"
 
-        # 3. BOT RESPONSES: Processing RPG Bot's output
+        # 4. BOT RESPONSES: Processing RPG Bot's output
         if uid == 555955826880413696:
-            # Step A: Identify which HUMAN this bot message belongs to
+            print(f"--- DEBUG: Bot Message Received: {content} ---")
+            # 1. Capture content from either text OR embed
+            raw_content = message.content.lower()
+            if not raw_content and message.embeds:
+                raw_content = str(message.embeds[0].description).lower()
+            
+            # 2. Identify the user (If this fails, the whole block is skipped)
             target_uid = self.identify_user(message)
+            if not target_uid or target_uid not in self.active_sessions: 
+                return
+            
+            session = self.active_sessions[target_uid]
+            print(f"--- DEBUG: Processing message for {session['username']} ---")
             
             # Step B: Double-check if we have an active session for this specific human
             if not target_uid or target_uid not in self.active_sessions:
@@ -92,7 +125,6 @@ class Trades(commands.Cog):
                 return
 
             embed = message.embeds[0] if message.embeds else None
-
             # --- SESSION LOGIC START ---
 
             # Profile Detection (Locks Area)
@@ -103,21 +135,27 @@ class Trades(commands.Cog):
                     session["logic_area"] = self.area_map.get(area, area)
                     session["status"] = "ACTIVE"
                     await message.channel.send(f"✅ **Area {area}** locked for **{session['username']}**. Run `rpg i`.")
+            
+            print(f"DEBUG: RPG Bot said: '{content}'")
+            # 3. Robust Dismantle Detection
+            if "successfully crafted" in raw_content:
+                print(f"--- DEBUG: Craft Success Found in: {raw_content} ---")
+                
+                # This regex skips everything between the number and the name inside backticks
+                match = re.search(r"([\d,]+).*?`([^`]+)`", raw_content)
+                
+                if match:
+                    got_amt = int(match.group(1).replace(",", ""))
+                    item_name = match.group(2).strip().lower()
+                    
+                    # Update virtual inventory
+                    session["virtual_inv"][item_name] = session["virtual_inv"].get(item_name, 0) + got_amt
+                    print(f"--- DEBUG: Virtual Inv Updated: +{got_amt} {item_name} ---")
 
-            # Crafting Detector
-            craft_match = re.search(r"(\d+)\s+(.*?)\s+successfully crafted", content)
-            if craft_match:
-                item_name = craft_match.group(2).strip()
-                if item_name in session["virtual_inv"]:
-                    session["virtual_inv"][item_name] += int(craft_match.group(1))
-                await self.refresh_tasks(target_uid) 
-                await self.send_next_command(message.channel, target_uid)
-
-            # Dismantle Success Detector
-            elif "successfully" in content and session.get("last_action") == "dismantle":
+                # ALWAYS continue the chain even if regex fails to prevent a permanent stall
                 session["last_action"] = None
-                await asyncio.sleep(1)
-                await self.refresh_tasks(target_uid) 
+                await asyncio.sleep(1.5)
+                await self.refresh_tasks(target_uid)
                 await self.send_next_command(message.channel, target_uid)
 
             # Trade Result Detector
@@ -160,20 +198,30 @@ class Trades(commands.Cog):
         return None
     
     def identify_user(self, message):
-        if not message.embeds: return None
-        emb = message.embeds[0]
-        icon_url = str(emb.author.icon_url) if emb.author else ""
-        match = re.search(r"avatars/(\d+)/", icon_url)
-        if match: return int(match.group(1))
-        
-        search_blob = f"{emb.author.name} {emb.description} ".lower()
-        search_blob += " ".join([f"{f.name} {f.value}" for f in emb.fields]).lower()
+        # 1. Check Embeds first (standard RPG behavior)
+        if message.embeds:
+            emb = message.embeds[0]
+            icon_url = str(emb.author.icon_url) if emb.author else ""
+            match = re.search(r"avatars/(\d+)/", icon_url)
+            if match: return int(match.group(1))
+            
+            search_blob = f"{emb.author.name} {emb.description} ".lower()
+            search_blob += " ".join([f"{f.name} {f.value}" for f in emb.fields]).lower()
+            for uid, sess in self.active_sessions.items():
+                if sess["username"] in search_blob: return uid
+
+        # 2. FALLBACK: Plain Text Identification (For dismantle/craft messages)
+        # If the bot is replying in a channel where a session is ACTIVE, 
+        # it's almost certainly for that session's user.
         for uid, sess in self.active_sessions.items():
-            if sess["username"] in search_blob: return uid
+            if sess["channel_id"] == message.channel.id:
+                return uid
+        
         return None
 
     async def send_next_command(self, channel, uid):
         session = self.active_sessions.get(uid)
+        print(f"--- DEBUG: Attempting to send command. Todo: {session.get('todo_list')} | Trade: {session.get('trade_list')} ---")
         if not session: return
 
         # 1. DISMANTLE FIRST: Check the guide's dismantle list
@@ -218,19 +266,22 @@ class Trades(commands.Cog):
                 "apple": self.get_count("apple", field_0_value),
                 "ruby": self.get_count("ruby", field_0_value)
             }
-
-            # DYNAMICALLY ADD HIGHER ITEMS FROM YOUR GUIDE
-            # This captures: epic log, super log, mega log, hyper log, ultra log, golden fish, epic fish, etc.
-            todos = []
+            # Add high tier items found in the embed
             for item in guide["dismantle"]:
-                count = self.get_count(item, field_0_value)
-                session["virtual_inv"][item] = count
-                if count > 0:
-                    todos.append(item)
+              session["virtual_inv"][item] = self.get_count(item, field_0_value)
+
+        # DYNAMICALLY ADD HIGHER ITEMS FROM YOUR GUIDE
+        # This captures: epic log, super log, mega log, hyper log, ultra log, golden fish, epic fish, etc.
+        todos = []
+        for item in guide["dismantle"]:
+            if session["virtual_inv"].get(item, 0) > 0:
+              # We only add it if it's not already the current action
+              todos.append(item)
             
-            # Important: Reverse the list so it dismantles from highest to lowest (Ultra -> Hyper -> Mega)
-            session["todo_list"] = list(reversed(todos)) 
-            print(f"--- Inventory Seeded (Virtual): {session['virtual_inv']} ---")
+        # Important: Reverse the list so it dismantles from highest to lowest (Ultra -> Hyper -> Mega)
+        session["todo_list"] = list(reversed(todos)) 
+        print(f"DEBUG: Updated Todo List: {session['todo_list']}")
+        print(f"--- Inventory Seeded (Virtual): {session['virtual_inv']} ---")
 
         # 2. VIRTUAL UPDATE (For Trades)
         if virtual_update:
