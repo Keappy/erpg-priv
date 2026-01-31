@@ -17,10 +17,18 @@ class Bot(commands.Bot):
         intents.guilds = True
         
         super().__init__(command_prefix='?', intents=intents, help_command=CustomHelp())
-        # Inside your Bot class in main.py
-        self.cogslist = {"squadrons", "events", "help", "config", "listeners", "check_trades"}
         
-        # --- ATTACH DATA TO CLIENT ---
+        # --- SINGLE SOURCE OF TRUTH ---
+        self.cogslist = [
+            "squadrons",
+            "events",
+            "help", 
+            "config",
+            "listeners",
+            "check_trades", 
+            #"calculator"
+        ]
+        
         self.data_file = DATA_FILE
         self.squad_data = self.load_data()
 
@@ -29,36 +37,33 @@ class Bot(commands.Bot):
             with open(self.data_file, "r") as f:
                 data = json.load(f)
             
-            # --- AUTO-FIX MISSING KEYS ---
             changes_made = False
             for squad_id, info in data.get("squadrons", {}).items():
                 if "is_hidden" not in info:
-                    info["is_hidden"] = True  # Default to hidden
+                    info["is_hidden"] = True
                     changes_made = True
             
             if changes_made:
-                self.save_data(data) # Save the repaired version
+                self.save_data(data)
                 print("🛠️ Fixed missing 'is_hidden' keys in JSON.")
                 
             return data
         return {"server_configs": {"global": {}}, "squadrons": {}}
     
     def reload_data(self):
-        """Reloads the JSON file back into the bot's memory."""
         self.squad_data = self.load_data()
         return self.squad_data
 
     def save_data(self, data=None):
-        # If no data passed, save the internal squad_data
         to_save = data if data is not None else self.squad_data
         with open(self.data_file, "w") as f:
             json.dump(to_save, f, indent=4)
 
     async def setup_hook(self):
-        initial_extensions = ["cogs.squadrons", "cogs.events", "cogs.help", "cogs.config", "cogs.listeners", "cogs.check_trades"]
+        # Loops through the single list defined in __init__
         for ext in self.cogslist:
             await self.load_extension(f"cogs.{ext}")
-        print(f"📂 Loaded: {', '.join(initial_extensions)}")
+        print(f"📂 Loaded {len(self.cogslist)} extensions: {', '.join(self.cogslist)}")
 
     async def on_ready(self):
         print(f"✅ Logged in as {self.user.name}")
@@ -68,39 +73,35 @@ client = Bot()
 @client.command(hidden=True)
 @commands.is_owner() 
 async def reload(ctx, extension: str):
-    """Reloads a specific cog. Usage: ?reload squadrons"""
+    """Reloads a specific cog."""
     try:
-        # We ensure it's lowercase and prefixed with 'cogs.'
         await client.reload_extension(f"cogs.{extension.lower()}")
         await ctx.send(f"✅ Successfully reloaded: 📂`cogs.{extension.lower()}`")
-    except commands.ExtensionNotLoaded:
-        await ctx.send(f"❌ Cog `cogs.{extension}` wasn't even loaded! Try `?load` instead.")
     except Exception as e:
         await ctx.send(f"❌ Error: `{e}`")
 
 @client.command()
 @commands.is_owner()
 async def reloadjson(ctx):
-    """Force reloads the JSON file without restarting the bot."""
+    """Force reloads the JSON file."""
     client.reload_data()
-    await ctx.send(f"🔄 Data from `{DATA_FILE}` has been re-synced to the bot!")
+    await ctx.send(f"🔄 Data from `{DATA_FILE}` has been re-synced!")
 
 @client.command(hidden=True)
 @commands.has_permissions(administrator=True)
 async def reloadall(ctx):
-    """Reloads all active cogs."""
-    extensions = ["squadrons", "events", "help", "config", "listeners", "check_trades"] 
+    """Reloads all cogs using the central list."""
     results = []
-    for ext in extensions:
+    # Pulls from the list inside the bot class
+    for ext in client.cogslist:
         try:
             await client.reload_extension(f"cogs.{ext}")
             results.append(f"✅ {ext}")
         except Exception as e:
-            results.append(f"❌ {ext} (Error: {e})")
-    """Force reloads the JSON file without restarting the bot."""
+            results.append(f"❌ {ext} ({e})")
+    
     client.reload_data()
-    await ctx.send(f"🔄 Data from `{DATA_FILE}` has been re-synced to the bot!")
-    await ctx.send("**Cog Reload Status:**\n" + "\n".join(results))
-
+    status_msg = "\n".join(results)
+    await ctx.send(f"🔄 Data re-synced!\n**Cog Reload Status:**\n{status_msg}")
 
 client.run(TOKEN)

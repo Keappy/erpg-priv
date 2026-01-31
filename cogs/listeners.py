@@ -20,6 +20,11 @@ class GlobalListeners(commands.Cog):
         trade_cog = self.bot.get_cog("Trades") # 'Trades' is the class name in check_trades.py
         if trade_cog:
             await trade_cog.process_trade_logic(message)
+            
+            # Inside GlobalListeners on_message
+        calc_cog = self.bot.get_cog("Calculator") 
+        if calc_cog:
+            await calc_cog.process_calculator_logic(message)
 
     @commands.Cog.listener()
     async def on_message_edit(self, before, after):

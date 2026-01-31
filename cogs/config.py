@@ -1,4 +1,5 @@
 import discord
+import os
 from discord.ext import commands
 
 class ConfigView(discord.ui.View):
@@ -11,13 +12,13 @@ class ConfigView(discord.ui.View):
         placeholder="Choose an event to configure...",
         options=[
             discord.SelectOption(label="Rare Hunt", value="pickaxe", emoji="<:shinypickaxe:1357664482884845628>"),
-            discord.SelectOption(label="Lootbox", value="summon", emoji="<:EdgyLootbox:578728161550925834>"),
+            discord.SelectOption(label="Lootbox", value="summon", emoji="<a:Lootbox:1467082633123987537>"),
             discord.SelectOption(label="Catch", value="catch", emoji="<:coin:557642215284015124>"),
-            discord.SelectOption(label="Cut", value="cut", emoji="<:woodenlog:770880739926999070>"),
-            discord.SelectOption(label="Lure", value="lure", emoji="<:normiefish:697940429999439872>"),
+            discord.SelectOption(label="Cut", value="cut", emoji="<a:log:1467867801015423160>"),
+            discord.SelectOption(label="Lure", value="lure", emoji="<a:fish:1467867755700162610>"),
             discord.SelectOption(label="Arena", value="arena", emoji="<:epicrpgarena:697563611698298922>"),
             discord.SelectOption(label="Miniboss", value="miniboss", emoji="🗡️"),
-            discord.SelectOption(label="Legendary Boss", value="boss", emoji="<:memedragon:547517937314037789>"),
+            discord.SelectOption(label="Legendary Boss", value="boss", emoji="<a:legendaryboss:1467862208959610993>"),
             discord.SelectOption(label="Pack", value="pack", emoji="<:box:1100581772808429700>"),
             discord.SelectOption(label="Ohmmm", value="ohmmm", emoji="<:energy:1084593332312887396>"),
             discord.SelectOption(label="Lucky Rewards", value="lucky rewards", emoji="<:idlons:1086449232967372910>"),
@@ -54,13 +55,13 @@ class GlobalSettings(commands.Cog):
         # Mapping for the Embed Display
         self.event_emojis = {
             "pickaxe": "<:shinypickaxe:1467073977749868699>",
-            "summon": "<:EdgyLootbox:1467082669560172584>",
+            "summon": "<a:Lootbox:1467082633123987537>",
             "catch": "<:coin:1467075148241829943>",
-            "cut": "<:woodenlog:1467073428841304114>",
-            "lure": "<:normiefish:1467074208876986493>",
+            "cut": "<a:log:1467867801015423160>",
+            "lure": "<a:fish:1467867755700162610>",
             "arena": "<:epicrpgarena:1467071906812395682>",
             "miniboss": "🗡️",
-            "boss": "<:memedragon:1467077272921047112>",
+            "boss": "<a:legendaryboss:1467862208959610993>",
             "pack": "<:box:1467083275922182187>",
             "ohmmm": "<:energy:1467083714440859729>",
             "lucky rewards": "<:idlons:1467083126512681094>"
@@ -75,14 +76,21 @@ class GlobalSettings(commands.Cog):
             color=discord.Color.green()
         )
         
+        # --- LOCAL IMAGE LOGIC ---
+        image_path = r"images\emojis\1467082633123987537.webp"
+        file = None
+        
+        if os.path.exists(image_path):
+            # Create the discord File object
+            file = discord.File(image_path, filename="summon_icon.webp")
+            # Link the embed thumbnail to the attachment name
+            embed.set_thumbnail(url="attachment://summon_icon.webp")
+        
         configs = self.data["server_configs"]["global"].get("event_configs", {})
         
         for event, details in configs.items():
-            # Get emoji from mapping, fallback to empty string if not found
             emoji = self.event_emojis.get(event.lower(), "❓")
             role_mention = f"<@&{details['role']}>"
-            
-            # Applying emoji + EVENT NAME
             field_name = f"{emoji} {event.upper()}"
             
             embed.add_field(
@@ -91,7 +99,11 @@ class GlobalSettings(commands.Cog):
                 inline=True
             )
 
-        await ctx.send(embed=embed, view=ConfigView(self.bot, self.data))
+        # Send both the file AND the embed together
+        if file:
+            await ctx.send(file=file, embed=embed, view=ConfigView(self.bot, self.data))
+        else:
+            await ctx.send(embed=embed, view=ConfigView(self.bot, self.data))
 
 async def setup(bot):
     await bot.add_cog(GlobalSettings(bot, bot.squad_data, bot.save_data))
