@@ -211,8 +211,9 @@ class SquadronManager(commands.Cog):
         self.save_data(self.data)
         
         await self.update_permissions(ctx.channel, hide=False)
-        await ctx.send("🔓 **Channel manually unhidden.** (State: Visible)")    @commands.command()
-    
+        await ctx.send("🔓 **Channel manually unhidden.** (State: Visible)")    
+        
+    @commands.command()
     async def clearactive(self, ctx):
         """Clears the active events list if it gets stuck."""
         squad = self.data["squadrons"].get(str(ctx.channel.id))
