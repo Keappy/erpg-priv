@@ -43,16 +43,16 @@ class Trades(commands.Cog):
 
         self.base_guides = {
             2: {"dismantle": ["epic log", "super log", "mega log", "hyper log", "ultra log"], "trades": ["log to fish"]},
-            3: {"dismantle": ["epic log", "super log", "mega log", "hyper log", "ultra log", "banana"], "trades": ["apple to log", "log to fish"]},
+            3: {"dismantle": ["banana", "epic log", "super log", "mega log", "hyper log", "ultra log"], "trades": ["apple to log", "log to fish"]},
             4: {"dismantle": ["golden fish", "epic fish", "epic log", "super log", "mega log", "hyper log", "ultra log"], "trades": ["fish to log", "log to apple"]},
             5: {"dismantle": ["golden fish", "epic fish", "epic log", "super log", "mega log", "hyper log", "ultra log"], "trades": ["ruby to log", "fish to log", "log to apple"]},
             7: {"dismantle": ["banana"], "trades": ["apple to log"]},
             8: {"dismantle": ["golden fish", "epic fish", "epic log", "super log", "mega log", "hyper log", "ultra log"], "trades": ["ruby to log", "fish to log", "log to apple"]},
-            9: {"dismantle": ["epic log", "super log", "mega log", "hyper log", "ultra log", "banana"], "trades": ["ruby to log", "apple to log", "log to fish"]},
+            9: {"dismantle": ["banana", "epic log", "super log", "mega log", "hyper log", "ultra log"], "trades": ["ruby to log", "apple to log", "log to fish"]},
             10: {"dismantle": ["banana"], "trades": ["apple to log"]},
             11: {"dismantle": [], "trades": ["ruby to log"]},
             12: {"dismantle": [], "trades": []},
-            15: {"dismantle": [], "trades": ["ruby to log", "fish to log"]}
+            15: {"dismantle": ["banana", "golden fish", "epic fish"], "trades": ["ruby to log", "fish to log"]}
         }
         self.area_map = {1 : 2, 6: 7, 13 : 12, 14 : 12}
 

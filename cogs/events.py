@@ -89,12 +89,7 @@ class EventTracker(commands.Cog):
                                 
                                 # Only announce if it was actually visible to prevent spam
                                 if was_visible:
-                                    await message.channel.send(f"🔒 **{event_type.upper()} ended. Channel hidden.**")
-                                else:
-                                    # Just a quiet confirmation that the event is over
-                                    await message.channel.send(f"✅ **{event_type.upper()}**")
-                    else:
-                        await message.channel.send(f"✅ **{event_type.upper()} ended.**")
+                                    await message.channel.send(f"🔒 **{event_type.upper()} ended. Channel has been hidden.**")
 
     def parse_buttons(self, message):
         """Detects event type and status via buttons, matching JSON keys."""
