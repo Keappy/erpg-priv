@@ -14,21 +14,23 @@ class CustomHelp(commands.HelpCommand):
             f"`{prefix}create [name]` - Create a new private squadron\n"
             f"`{prefix}rename [name]` - Rename current squadron\n"
             f"`{prefix}transferowner [@user]` - Give ownership\n"
-            f"`{prefix}showlist` - View members and settings"
+            f"`{prefix}showlist` - View members and settings\n"
+            f"`{prefix}slowmode [sec]` - Set chat slowmode (0 to off)"
         )
         embed.add_field(name="👥 Squadron Management", value=management, inline=False)
 
         access = (
-            f"`{prefix}squad` - Tells the user which squadron channel they belong to\n"
-            f"`{prefix}allow [@user]` - Grant access\n"
-            f"`{prefix}deny [@user]` - Remove access\n"
-            f"`{prefix}hide` / `{prefix}unhide` - Toggle visibility"
+            f"`{prefix}squad` - View your squadron channels\n"
+            f"`{prefix}allow [@user]` - Grant access to member\n"
+            f"`{prefix}deny [@user]` - Remove access from member\n"
+            f"`{prefix}hide` / `{prefix}unhide` - Toggle visibility\n"
+            f"`{prefix}lock` / `{prefix}unlock` - Toggle member chat perms"
         )
-        embed.add_field(name="🔒 Access Control", value=access, inline=False)
+        embed.add_field(name="🔒 Access & Chat Control", value=access, inline=False)
 
         settings = (
             f"`{prefix}eventson` / `{prefix}eventsoff` - Toggle unhiding\n"
-            f"`{prefix}squadonly [on/off]` - Force hidden\n"
+            f"`{prefix}squadonly [on/off]` - Force hidden mode\n"
             f"`{prefix}clearactive` - Reset stuck status"
         )
         embed.add_field(name="⚙️ Event Settings", value=settings, inline=False)
@@ -38,6 +40,7 @@ class CustomHelp(commands.HelpCommand):
 
     # This runs for ?help [command]
     async def send_command_help(self, command):
+        prefix = self.context.clean_prefix
         embed = discord.Embed(
             title=f"Help: {command.name}",
             description=command.help or "No description provided.",
@@ -45,10 +48,11 @@ class CustomHelp(commands.HelpCommand):
         )
         
         # Show usage/aliases if they exist
-        if command.usage:
-            embed.add_field(name="Usage", value=f"`?{command.name} {command.usage}`")
+        usage_str = f"`{prefix}{command.name} {command.usage}`" if command.usage else f"`{prefix}{command.name}`"
+        embed.add_field(name="Usage", value=usage_str)
+        
         if command.aliases:
-            embed.add_field(name="Aliases", value=", ".join(command.aliases))
+            embed.add_field(name="Aliases", value=", ".join(f"`{a}`" for a in command.aliases))
 
         await self.get_destination().send(embed=embed)
 

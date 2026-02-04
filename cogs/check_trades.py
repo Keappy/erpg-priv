@@ -52,7 +52,7 @@ class Trades(commands.Cog):
             10: {"dismantle": ["banana"], "trades": ["apple to log"]},
             11: {"dismantle": [], "trades": ["ruby to log"]},
             12: {"dismantle": [], "trades": []},
-            15: {"dismantle": ["banana", "golden fish", "epic fish"], "trades": ["ruby to log", "fish to log"]}
+            15: {"dismantle": ["banana", "golden fish", "epic fish"], "trades": ["ruby to log", "fish to log", "apple to log"]}
         }
         self.area_map = {1 : 2, 6: 7, 13 : 12, 14 : 12}
 
@@ -83,7 +83,7 @@ class Trades(commands.Cog):
                 del self.active_sessions[uid]
                 print(f"CLEANUP: Removed inactive session for {uid}")
 
-            await asyncio.sleep(30) # Check every 30 seconds
+            await asyncio.sleep(60) # Check every 30 seconds
 
     async def process_trade_logic(self, message):
         content = message.content.lower()
@@ -98,7 +98,9 @@ class Trades(commands.Cog):
                 "logic_area": None, "real_area": 0,
                 "status": "WAITING_FOR_PROFILE",
                 "channel_id": message.channel.id,
+                "current_task": None,
                 "last_action": None,
+                "mismatch_detected": False,
                 "virtual_inv": {},
                 "last_seen": datetime.now(), # Add this
                 "pending_dismantle": None # Track what we just asked to dismantle
@@ -108,16 +110,28 @@ class Trades(commands.Cog):
 
         # 2. Track USER Dismantle Commands
         if uid in self.active_sessions:
+            session = self.active_sessions[uid]
             if "rpg dismantle" in content:
-                self.active_sessions[uid]["last_seen"] = datetime.now() # Refresh the timer
-                session = self.active_sessions[uid]
+                session["last_seen"] = datetime.now() # Refresh the timer
                 session["last_action"] = "dismantle"
                 
                 # Enhanced Regex: Matches "rpg dismantle item" or "rpg dismantle item amount"
                 # This captures the item name and optionally the amount/all
                 match = re.search(r"rpg dismantle\s+(.*?)(?:\s+(all|\d+))?$", content)
                 if match:
-                    item_to_lose = match.group(1).strip()
+                    item_to_lose = match.group(1).strip().lower()
+                    
+                    # Look at the saved task instead of the list
+                    expected_item = session.get("current_task")
+                    
+                    print(f"DEBUG: Input='{item_to_lose}' | Expected='{expected_item}'")
+
+                    if expected_item and item_to_lose != expected_item:
+                        print(f"DEBUG: BLOCKING mismatch.")
+                        # IMPORTANT: If they fail, we put the item BACK so they can try again
+                        session["todo_list"].insert(0, expected_item)
+                        return
+                    
                     raw_amt = match.group(2)
                     
                     # Logic for amount: if 'all', we use inventory; if None, it's 1.
@@ -130,14 +144,24 @@ class Trades(commands.Cog):
 
                     session["pending_dismantle"] = {"item": item_to_lose, "amount": amt}
                     print(f"DEBUG: User dismantling {amt}x {item_to_lose}.")
-
-        # 3. USER COMMANDS: Dismantle or Trade
-        # We only track these if the user ALREADY has an active session
-        if uid in self.active_sessions:
-            if "rpg dismantle" in content:
-                self.active_sessions[uid]["last_action"] = "dismantle"
             elif "rpg trade" in content:
-                self.active_sessions[uid]["last_action"] = "trade"
+                session["last_seen"] = datetime.now()
+                
+                match = re.search(r"rpg trade\s+([a-f])", content)
+                if match:
+                    typed_id = match.group(1)
+                    expected_id = session.get("current_task")
+
+                    # VALIDATION
+                    if expected_id and typed_id != expected_id:
+                        print(f"DEBUG: BLOCKING wrong trade ID. User: {typed_id} | Task: {expected_id}")
+                        # NEW: Set a flag to ignore the inevitable error message from RPG Bot
+                        session["mismatch_detected"] = True
+                        return 
+
+                    session["last_action"] = "trade"
+                    # Reset flag if they finally got it right
+                    session["mismatch_detected"] = False
 
         # 4. BOT RESPONSES: Processing RPG Bot's output
         if uid == 555955826880413696:
@@ -164,6 +188,67 @@ class Trades(commands.Cog):
                 return
 
             embed = message.embeds[0] if message.embeds else None
+
+            is_dismantle_error = False
+            if embed and embed.title and "don't have enough items" in embed.title.lower():
+                is_dismantle_error = True
+
+            if is_dismantle_error:
+                # NEW: If we didn't expect a dismantle, ignore the error!
+                if not session.get("pending_dismantle"):
+                    print(f"DEBUG: Ignoring RPG Bot error because no dismantle was pending.")
+                    return
+                failed_item = "unknown item"
+                
+                if embed.description:
+                    # Extracts the item name from the bold text in the description
+                    match = re.search(r"\*\*(.*?)\*\*", embed.description)
+                    if match:
+                        failed_item = match.group(1).strip().lower()
+
+                # Set status to SYNC_REQUIRED to stop automation and force a refresh
+                session["status"] = "SYNC_REQUIRED"
+                print(f"DEBUG: Dismantle failed. Forcing re-sync for {failed_item}")
+                return await message.channel.send(
+                    f"❌ **Dismantle Failed!** <@{target_uid}>, you are missing **{failed_item}**.\n"
+                    f"Please run `rpg i` to re-sync your inventory."
+                )
+            
+           # Case 1: "You don't have enough [item]"
+            if "you don't have enough" in raw_content:
+                # NEW: If we flagged a mismatch, ignore this specific bot response
+                if session.get("mismatch_detected"):
+                    print("DEBUG: Silence mismatch error (Not enough items)")
+                    session["mismatch_detected"] = False
+                    return
+                
+                # Extracts the item name after the emoji/mention
+                item_match = re.search(r"enough\s+(?:<[^>]+>\s+)?(.*?),\s+check", raw_content)
+                if item_match:
+                    failed_item = item_match.group(1).strip().lower()
+                    current_target = session.get("last_item_attempted")
+                    
+                    if current_target and failed_item in current_target:
+                        session["status"] = "SYNC_REQUIRED"
+                        return await message.channel.send(
+                            f"❌ **Out of Items!** <@{target_uid}>, you need more **{failed_item}**.\n"
+                            f"Please run `rpg i` to re-sync."
+                        )
+
+            # Case 2: "the amount has to be 1 or higher"
+            elif "amount has to be 1 or higher" in raw_content:
+                # NEW: If we flagged a mismatch, ignore this specific bot response
+                if session.get("mismatch_detected"):
+                    print("DEBUG: Silence mismatch error (Zero items)")
+                    session["mismatch_detected"] = False
+                    return
+                
+                current_target = session.get("last_item_attempted")
+                session["status"] = "SYNC_REQUIRED"
+                return await message.channel.send(
+                    f"❌ **Empty Inventory!** <@{target_uid}>, your **{current_target or 'items'}** are at 0.\n"
+                    f"Please run `rpg i` to refresh."
+                )
             # --- SESSION LOGIC START ---
 
             # Profile Detection (Locks Area)
@@ -246,21 +331,29 @@ class Trades(commands.Cog):
                     await self.send_next_command(message.channel, target_uid)
     
     def identify_user(self, message):
-        # 1. Check Embeds first (standard RPG behavior)
+        # 1. Check for a direct mention in the message content (Handles Errors with pings)
+        # This keeps 'target_uid' consistent with the pinged user
+        mention_match = re.search(r"<@!?(\d+)>", message.content)
+        if mention_match:
+            uid_from_ping = int(mention_match.group(1))
+            if uid_from_ping in self.active_sessions:
+                return uid_from_ping
+
+        # 2. Check Embeds (Handles standard trade/inventory/profile)
         if message.embeds:
             emb = message.embeds[0]
+            # Check Avatar ID (The most reliable way)
             icon_url = str(emb.author.icon_url) if emb.author else ""
             match = re.search(r"avatars/(\d+)/", icon_url)
             if match: return int(match.group(1))
             
-            search_blob = f"{emb.author.name} {emb.description} ".lower()
+            # Scan text for username (Handles image_4c729c.png where only name appears)
+            search_blob = f"{emb.author.name if emb.author else ''} {emb.description or ''} ".lower()
             search_blob += " ".join([f"{f.name} {f.value}" for f in emb.fields]).lower()
             for uid, sess in self.active_sessions.items():
                 if sess["username"] in search_blob: return uid
 
-        # 2. FALLBACK: Plain Text Identification (For dismantle/craft messages)
-        # If the bot is replying in a channel where a session is ACTIVE, 
-        # it's almost certainly for that session's user.
+        # 3. Last Resort: Channel Context
         for uid, sess in self.active_sessions.items():
             if sess["channel_id"] == message.channel.id:
                 return uid
@@ -275,14 +368,31 @@ class Trades(commands.Cog):
         # 1. DISMANTLE FIRST: Check the guide's dismantle list
         if session.get("todo_list"):
             item = session["todo_list"].pop(0)
-            session["last_action"] = "dismantle" # Set this so we can catch the success message
-            return await channel.send(f"```rpg dismantle {item} all```")
+            session["last_action"] = "dismantle" 
+            session["current_task"] = item     # Save a "copy" for validation
+            session["last_item_attempted"] = item # Store for error checking
+
+            # Combine strings and fix quote nesting
+            msg = (
+                f"**{session['username'].capitalize()}** `rpg dismantle {item} all` !\n"
+                f"> ```rpg dismantle {item} all```"
+            )
+            return await channel.send(msg)
 
         # 2. TRADE SECOND: If nothing left to dismantle, start trading
         if session.get("trade_list"):
-            tid = session["trade_list"][0] # Peek (pop happens in refresh_tasks or after confirmation)
+            tid = session["trade_list"].pop(0) # Change to pop(0) to match dismantle logic
+            session["current_task"] = tid      # Save the ID for validation
+            
+            reverse_map = {"a": "normie fish", "b": "wooden log", "c": "apple", "d": "wooden log", "e": "ruby", "f": "wooden log"}
+            session["last_item_attempted"] = reverse_map.get(tid)
             session["last_action"] = "trade"
-            return await channel.send(f"```rpg trade {tid} all```")
+            
+            msg = (
+                f"**{session['username'].capitalize()}** `rpg trade {tid} all` !\n"
+                f"> ```rpg trade {tid} all```"
+            )
+            return await channel.send(msg)
         
         # 3. GOAL REACHED
         area_num = session.get("real_area", "?")
@@ -313,56 +423,52 @@ class Trades(commands.Cog):
         session = self.active_sessions[uid]
         guide = self.base_guides.get(session["logic_area"], {"dismantle": [], "trades": []})
         
-        # 1. INITIAL SEED (Only from 'rpg i')
+        # 1. UPDATE VIRTUAL INVENTORY
         if embed:
             field_0_value = embed.fields[0].value.lower()
+            session["virtual_inv"]["wooden log"] = self.get_count("wooden log", field_0_value)
+            session["virtual_inv"]["normie fish"] = self.get_count("normie fish", field_0_value)
+            session["virtual_inv"]["apple"] = self.get_count("apple", field_0_value)
+            session["virtual_inv"]["ruby"] = self.get_count("ruby", field_0_value)
             
-            # Start with base items
-            session["virtual_inv"] = {
-                "wooden log": self.get_count("wooden log", field_0_value),
-                "normie fish": self.get_count("normie fish", field_0_value),
-                "apple": self.get_count("apple", field_0_value),
-                "ruby": self.get_count("ruby", field_0_value)
-            }
-            # Add high tier items found in the embed
             for item in guide["dismantle"]:
-              session["virtual_inv"][item] = self.get_count(item, field_0_value)
+                session["virtual_inv"][item] = self.get_count(item, field_0_value)
 
-        # DYNAMICALLY ADD HIGHER ITEMS FROM YOUR GUIDE
-        # This captures: epic log, super log, mega log, hyper log, ultra log, golden fish, epic fish, etc.
-        todos = []
-        for item in guide["dismantle"]:
-            if session["virtual_inv"].get(item, 0) > 0:
-              # We only add it if it's not already the current action
-              todos.append(item)
-            
-        # Important: Reverse the list so it dismantles from highest to lowest (Ultra -> Hyper -> Mega)
-        session["todo_list"] = list(reversed(todos)) 
-        print(f"DEBUG: Updated Todo List: {session['todo_list']}")
-        print(f"--- Inventory Seeded (Virtual): {session['virtual_inv']} ---")
-
-        # 2. VIRTUAL UPDATE (For Trades)
+        # 2. VIRTUAL UPDATE (From Trades)
         if virtual_update:
             gave_item, gave_amt, got_item, got_amt = virtual_update
             if gave_item in session["virtual_inv"]:
                 session["virtual_inv"][gave_item] -= gave_amt
             if got_item in session["virtual_inv"]:
                 session["virtual_inv"][got_item] += got_amt
-            print(f"--- Virtual Trade Update: {gave_item} -> {got_item} | New Inv: {session['virtual_inv']} ---")
 
-        # 3. REBUILD TRADE QUEUE (Only if todo_list is empty)
+        # 3. REBUILD TODO LIST (Dismantle Chain)
+        # We always check if we have high-tier items to break down first
+        todos = []
+        for item in guide["dismantle"]:
+            if session["virtual_inv"].get(item, 0) > 0:
+                todos.append(item)
+        
+        # Priority 1: Dismantling (Highest to Lowest)
+        session["todo_list"] = list(reversed(todos)) 
+
+        # 4. REBUILD TRADE QUEUE (Only if NO dismantling is left)
         new_trades = []
-        if not session.get("todo_list"):
+        if not session["todo_list"]: # This line is the "Gatekeeper"
             ratios = self.area_ratios.get(session["real_area"], {})
             for t_str in guide["trades"]:
                 parts = t_str.split(" to ")
                 source, target = parts[0], parts[1]
+                
                 search_name = "wooden log" if source == "log" else "normie fish" if source == "fish" else source
                 key = f"log_to_{target}" if source == "log" else source
                 
-                if session["virtual_inv"].get(search_name, 0) >= (ratios.get(key, 1) if source == "log" else 1):
+                required_amt = ratios.get(key, 1) if source == "log" else 1
+                if session["virtual_inv"].get(search_name, 0) >= required_amt:
                     tid = self.trade_ids.get(key)
                     if tid: new_trades.append(tid)
+        else:
+            print(f"DEBUG: Dismantle items found {session['todo_list']}. Blocking trade queue.")
 
         session["trade_list"] = new_trades
 
