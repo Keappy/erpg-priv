@@ -25,7 +25,8 @@ class Bot(commands.Bot):
             "help", 
             "config",
             "listeners",
-            "check_trades", 
+            "check_trades",
+            "fetch" 
             #"calculator"
         ]
         

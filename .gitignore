@@ -1,3 +1,4 @@
 .env
 __pycache__/
+cogs/fetch.py
 *.json
