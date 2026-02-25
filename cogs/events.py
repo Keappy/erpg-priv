@@ -102,8 +102,8 @@ class EventTracker(commands.Cog):
                 is_result = is_result_msg
 
                 if not is_result:
-                    await asyncio.sleep(1.5) 
-                    async for msg in message.channel.history(limit=5):
+                    await asyncio.sleep(0.5) 
+                    async for msg in message.channel.history(limit=40):
                         if msg.author.id in bot_ids and self.is_result_embed(msg):
                             target_message = msg
                             is_result = True
@@ -111,9 +111,9 @@ class EventTracker(commands.Cog):
 
                 if is_result and was_visible:
                     try:
-                        await target_message.reply("Channel has been hidden.")
+                        await target_message.reply("🔒 **Event ended. Channel hidden.**")
                     except:
-                        await message.channel.send("Channel has been hidden.")
+                        await message.channel.send("🔒 **Event ended. Channel hidden.**")
 
     def is_result_embed(self, message):
         if not message.embeds: return False
