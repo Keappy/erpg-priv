@@ -52,22 +52,41 @@ class EventTracker(commands.Cog):
             if (now - self.last_event_time.get(f"start_{chan_ev_key}", 0)) < 4: return
             self.last_event_time[f"start_{chan_ev_key}"] = now
 
+            was_hidden = False # Track if we are actually unhiding a hidden channel
+
             if squad is not None:
                 if "active_events" not in squad: squad["active_events"] = []
+                
+                # Check if this is the FIRST active event
+                is_first_event = len(squad["active_events"]) == 0
+
                 if event_type not in squad["active_events"]:
                     squad["active_events"].append(event_type)
                     self.save_data(self.data)
                 
-                if squad.get("events_enabled", True) and not squad.get("squad_only_mode", False):
+                # Only UNHIDE if 'is_hidden' is TRUE and it's the first event
+                if squad.get("is_hidden", True) and squad.get("events_enabled", True) and not squad.get("squad_only_mode", False):
                     manager = self.bot.get_cog("SquadronManager")
-                    if manager: await manager.update_permissions(message.channel, hide=False)
+                    if manager:
+                        overwrites = message.channel.overwrites_for(message.guild.default_role)
+                        # It's hidden if view_channel is explicitly False
+                        was_hidden = overwrites.view_channel is False 
+                        
+                        if was_hidden and is_first_event:
+                            await manager.update_permissions(message.channel, hide=False)
 
             base_msg = self.get_event_config_msg(event_type)
-            await message.channel.send(base_msg)
+            
+            # If we just unhided the channel for the first event, add the subtext
+            if was_hidden and squad.get("is_hidden", True):
+                final_msg = f"{base_msg}\n-# 🔓 Channel is visible"
+                await message.channel.send(final_msg)
+            else:
+                # Normal ping for public channels or additional events
+                await message.channel.send(base_msg)
 
             if event_type == "catch" and message.embeds:
                 field_val = message.embeds[0].fields[0].value if message.embeds[0].fields else ""
-                # Updated to capture the MAX value (after the ~) for big/super big catches
                 match = re.search(r"~\s*([\d,]+[kmbtq]?)", field_val, re.IGNORECASE)
                 if match:
                     val_to_check = self.parse_value(match.group(1))
@@ -91,7 +110,8 @@ class EventTracker(commands.Cog):
             self.last_event_time[f"end_{chan_ev_key}"] = now
 
             was_visible = False
-            if squad is not None and len(squad.get("active_events", [])) == 0:
+            # We ONLY process the hide if manual 'is_hidden' is enabled
+            if squad is not None and squad.get("is_hidden", True) and len(squad.get("active_events", [])) == 0:
                 manager = self.bot.get_cog("SquadronManager")
                 if manager:
                     overwrites = message.channel.overwrites_for(message.guild.default_role)
@@ -101,6 +121,7 @@ class EventTracker(commands.Cog):
                 target_message = message
                 is_result = is_result_msg
 
+                # If the current message isn't the result, look for it
                 if not is_result:
                     await asyncio.sleep(0.5) 
                     async for msg in message.channel.history(limit=40):
@@ -109,11 +130,12 @@ class EventTracker(commands.Cog):
                             is_result = True
                             break
 
+                # Only reply if the channel was actually visible before we hid it
                 if is_result and was_visible:
                     try:
-                        await target_message.reply("🔒 **Event ended. Channel hidden.**")
+                        await target_message.reply("Event ended!\n-# 🔒 Channel is hidden.")
                     except:
-                        await message.channel.send("🔒 **Event ended. Channel hidden.**")
+                        await message.channel.send("Event ended!\n-# 🔒 Channel is hidden.")
 
     def is_result_embed(self, message):
         if not message.embeds: return False
@@ -193,7 +215,7 @@ class EventTracker(commands.Cog):
                 elif lbl == "JOIN" or "join" in cid:
                     emo = str(btn.emoji).lower() if btn.emoji else ""
                     # Priority check for IDs which are consistent in slash commands
-                    if "arena" in cid or "swords" in emo: event = "arena"
+                    if "arena" in cid and "swords" in emo: event = "arena"
                     elif "miniboss" in cid or "dagger" in emo: event = "miniboss"
                     elif "idlons" in emo: event = "lucky rewards"
                 
