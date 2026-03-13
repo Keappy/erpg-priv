@@ -20,6 +20,7 @@ class Trades(commands.Cog):
             "banana": ("apple", 15),
             "epic fish": ("golden fish", 100),
             "golden fish": ("normie fish", 15)
+            # Dismantle only returns 80%
         }
 
         self.trade_ids = {
@@ -37,8 +38,16 @@ class Trades(commands.Cog):
             8: {"log_to_fish": 3, "log_to_apple": 8, "log_to_ruby": 675},
             9: {"log_to_fish": 2, "log_to_apple": 12, "log_to_ruby": 850},
             10: {"log_to_fish": 3, "log_to_apple": 12, "log_to_ruby": 500},
-            11: {"log_to_ruby": 500}, 12: {"log_to_ruby": 500},
-            13: {"log_to_ruby": 500}, 14: {"log_to_ruby": 500},
+            11: {"log_to_fish": 3, "log_to_apple": 8, "log_to_ruby": 500}, 
+            12: {"log_to_fish": 3, "log_to_apple": 8, "log_to_ruby": 350},
+            13: {"log_to_fish": 3, "log_to_apple": 8, "log_to_ruby": 350}, 
+            14: {"log_to_fish": 3, "log_to_apple": 12, "log_to_ruby": 350},
+            15: {"log_to_fish": 3, "log_to_apple": 12, "log_to_ruby": 350},
+            16: {"log_to_fish": 2, "log_to_apple": 4, "log_to_ruby": 250},
+            17: {"log_to_fish": 2, "log_to_apple": 4, "log_to_ruby": 250},
+            18: {"log_to_fish": 2, "log_to_apple": 4, "log_to_ruby": 250},
+            19: {"log_to_fish": 2, "log_to_apple": 4, "log_to_ruby": 250},
+            20: {"log_to_fish": 2, "log_to_apple": 4, "log_to_ruby": 250}
         }
 
         self.base_guides = {
@@ -54,7 +63,72 @@ class Trades(commands.Cog):
             12: {"dismantle": [], "trades": []},
             15: {"dismantle": ["banana", "golden fish", "epic fish"], "trades": ["ruby to log", "fish to log", "apple to log"]}
         }
+        self.craft_guides = {
+            # Area: [(Source, Target, Recipe_Cost)]
+            3: [("normie fish", "golden fish", 15), ("golden fish", "epic fish", 100)],
+            5: [("apple", "banana", 15), ("wooden log", "ruby", 450)],
+            7: [("wooden log", "ruby", 675)],
+            8: [("wooden log", "ruby", 675), ("apple", "banana", 15)],
+            9: [("normie fish", "golden fish", 15)], # Epic fish excluded (0.96 loss)
+            15: [
+                ("wooden log", "epic log", 25) # Further than epic log will cause into loss mats after time potion !! (⚠️ multiplier is lower than 0.81 after super log !!)   
+            ]
+        }
+
+
         self.area_map = {1 : 2, 6: 7, 13 : 12, 14 : 12}
+        self.craft_area_map = {
+            1: 3, 2: 3,   # Mapping 1 & 2 to 3 (Craft Golden/Epic Fish)
+            4: 5,         # Mapping 4 to 5 (Apple -> Banana -> Ruby)
+            6: 7,         # Mapping 6 to 7 (Log -> Ruby)
+            13: 12, 14: 12
+        }
+
+        # In __init__
+        self.command_locks = {}
+
+    def get_overflow_tasks(self, session):
+        import math
+        area = session["real_area"]
+        inv = session["virtual_inv"]
+        
+        # Strictly 25 Billion as requested
+        CAP = 25000000000 
+        tasks = []
+
+        logic_area = self.craft_area_map.get(area, area)
+        steps = self.craft_guides.get(logic_area, [])
+
+        for source, target, cost in steps:
+            count_source = inv.get(source, 0)
+            count_target = inv.get(target, 0)
+
+            # Calculate how many we are OVER 25b
+            excess_source = max(0, count_source - CAP)
+            
+            # Use math.ceil so that any amount over 0 (like 8) results in 1 craft
+            potential_new_target = math.ceil(excess_source / cost) if excess_source > 0 else 0
+            total_potential_target = count_target + potential_new_target
+
+            # 1. Cascade Check: Will the RESULT of this craft overflow the next tier?
+            if total_potential_target > CAP:
+                if target == "golden fish":
+                    excess_target = total_potential_target - CAP
+                    amt = math.ceil(excess_target / 100)
+                    if amt > 0: tasks.append(("epic fish", amt))
+                elif target == "banana":
+                    if inv.get("wooden log", 0) > CAP:
+                        tasks.append(("ruby", "all"))
+                return tasks
+
+            # 2. Standard Check: Is the source currently over 25b?
+            if count_source > CAP:
+                amt = math.ceil((count_source - CAP) / cost)
+                if amt > 0:
+                    tasks.append((target, amt if target != "ruby" else "all"))
+                return tasks
+
+        return tasks
 
     def get_count(self, item_name, text):
         # Regex matches the bold name and captures the following number/commas
@@ -268,59 +342,107 @@ class Trades(commands.Cog):
                         f"✅ **Area {area}** locked for **{session['username']}**. Please Run `rpg i`.\n")
             
             print(f"DEBUG: RPG Bot said: '{content}'")
-            # 3. Robust Dismantle Detection
+            # 3. Robust Craft/Dismantle Detection
             if "successfully crafted" in raw_content:
-                match = re.search(r"([\d,]+).*?`([^`]+)`", raw_content)
+                # Group 1: Amount, Group 2: Item Name, Group 3: Optional Refund %
+                CRAFT_RE = r"([\d,]+).*?`([^`]+)` successfully crafted!(?:\s+woah!! you got ([\d.]+)% of the recipe back)?"
+                match = re.search(CRAFT_RE, raw_content)
+                
                 if match:
                     got_amt = int(match.group(1).replace(",", ""))
                     yield_item = match.group(2).strip().lower() 
+                    refund_percent = float(match.group(3)) if match.group(3) else 0.0
                     
-                    # Normalize
+                    # Normalize names for internal virtual_inv keys
                     if yield_item == "fish": yield_item = "normie fish"
-                    if yield_item == "log": yield_item = "wooden log"
+                    elif yield_item == "log": yield_item = "wooden log"
                     
                     pending = session.get("pending_dismantle")
+                    
+                    # --- SCENARIO A: DISMANTLE (triggered by user/todo_list) ---
+                    # We check 'pending' first because dismantle is a priority task
                     if pending:
                         high_tier_item = pending["item"]
-                        # LOGIC FIX: We update the virtual inventory ONCE here.
-                        # We do NOT do it again in refresh_tasks.
+                        
+                        # 1. Update Virtual Inventory
                         session["virtual_inv"][high_tier_item] = max(0, session["virtual_inv"].get(high_tier_item, 0) - pending["amount"])
                         session["virtual_inv"][yield_item] = session["virtual_inv"].get(yield_item, 0) + got_amt
                         
-                        print(f"DEBUG: Virtual Update: -{pending['amount']} {high_tier_item}, +{got_amt} {yield_item}")
-                        # Use self.dismantle_returns (your variable name in the new code)
+                        # 2. VALIDATION LOGIC
                         recipe = self.dismantle_returns.get(high_tier_item)
-                        
                         if recipe:
                             _, recipe_amt = recipe
+                            # Dismantle yield is strictly 80% of (Input Amount * Recipe Amount)
                             expected_yield = floor(pending["amount"] * recipe_amt * 0.8)
                             
-                            # Validation logic
                             if got_amt == expected_yield:
-                                print(f"✅ Verified Dismantle: {high_tier_item}")
+                                print(f"✅ Verified Dismantle: {high_tier_item} -> {got_amt} {yield_item}")
                             else:
                                 print(f"⚠️ Yield mismatch: Expected {expected_yield}, got {got_amt}")
 
-                    session["pending_dismantle"] = None
+                        session["pending_dismantle"] = None # Reset 
+
+                    # --- SCENARIO B: OVERFLOW CRAFT ---
+                    else:
+                        # 1. Try to find if it's a dismantle-style craft (e.g., getting normie fish from golden)
+                        # We use the result (v[0]) to find the source (k) and cost (v[1])
+                        recipe = self.dismantle_returns.get(yield_item)
+                        
+                        if recipe:
+                            req_item, req_per_unit = recipe
+                        else:
+                            # 2. Fallback to standard craft guides (e.g., Apple -> Banana, Log -> Ruby)
+                            # This flattens your craft_guides to find the source and cost
+                            all_steps = [step for steps in self.craft_guides.values() for step in steps]
+                            standard_recipe = next((s for s in all_steps if s[1] == yield_item), None)
+                            
+                            if standard_recipe:
+                                req_item, _, req_per_unit = standard_recipe
+                            else:
+                                req_item, req_per_unit = None, 0
+
+                        # If we found a recipe (either from dismantle_returns or craft_guides)
+                        if req_item:
+                            total_req = got_amt * req_per_unit
+                            
+                            # Using math.floor for the RPG Bot refund logic
+                            refund_amt = floor(total_req * (refund_percent / 100))
+                            actual_spent = total_req - refund_amt
+                            
+                            # Update Virtual Inventory
+                            session["virtual_inv"][yield_item] = session["virtual_inv"].get(yield_item, 0) + got_amt
+                            session["virtual_inv"][req_item] = max(0, session["virtual_inv"].get(req_item, 0) - actual_spent)
+                            
+                            print(f"DEBUG: Overflow Craft. Spent {actual_spent} {req_item} (Refunded {refund_amt}).")
+                        else:
+                            # This handles items the bot doesn't know how to track yet
+                            print(f"DEBUG: Unknown craft target '{yield_item}'. Virtual inventory not updated.")
+
                     await self.refresh_tasks(target_uid)
                     await self.send_next_command(message.channel, target_uid)
 
-            # Trade Result Detector
+            # Inside process_trade_logic, locate the "Trade Result Detector" elif:
             elif embed and any(x in str(embed.fields[0].name if embed.fields else "").lower() for x in ["traded items", "trade is done"]):
                 field_val = embed.fields[0].value.lower()
-                # Verify the human's name is actually in this specific trade embed
+                # Ensure we only process if our username is the one GIVING items
                 if session["username"] in field_val:
+                    # Stricter regex to catch the item you gave vs what NPC gave
                     gave_match = re.search(rf"{session['username']}.*?(log|fish|apple|ruby).*?x([\d,]+)", field_val)
                     npc_match = re.search(r"epic npc\*\*: .*?(log|fish|apple|ruby).*?x([\d,]+)", field_val)
 
                     if gave_match and npc_match:
-                        gave_item = "wooden log" if "log" in gave_match.group(1) else "normie fish" if "fish" in gave_match.group(1) else gave_match.group(1)
-                        got_item = "wooden log" if "log" in npc_match.group(1) else "normie fish" if "fish" in npc_match.group(1) else npc_match.group(1)
+                        def clean_item(name):
+                            if "log" in name: return "wooden log"
+                            if "fish" in name: return "normie fish"
+                            return name.strip()
+
+                        gave_item = clean_item(gave_match.group(1))
+                        got_item = clean_item(npc_match.group(1))
                         gave_amt = int(gave_match.group(2).replace(",", ""))
                         got_amt = int(npc_match.group(2).replace(",", ""))
 
+                        # Important: Refresh and then send command
                         await self.refresh_tasks(target_uid, None, virtual_update=(gave_item, gave_amt, got_item, got_amt))
-                    
                     await self.send_next_command(message.channel, target_uid)
 
             # Inventory Detector
@@ -362,41 +484,45 @@ class Trades(commands.Cog):
 
     async def send_next_command(self, channel, uid):
         session = self.active_sessions.get(uid)
-        print(f"--- DEBUG: Attempting to send command. Todo: {session.get('todo_list')} | Trade: {session.get('trade_list')} ---")
         if not session: return
 
-        # 1. DISMANTLE FIRST: Check the guide's dismantle list
+        # 1. IMMEDIATE LOCK: Update this first to prevent race conditions
+        now = datetime.now()
+        last_sent = session.get("last_msg_time", datetime.min)
+        
+        # Increased to 2.0s because your logs show triggers happening very fast
+        if (now - last_sent).total_seconds() < 2.0:
+            print(f"DEBUG: Blocked double-fire for {session['username']}")
+            return
+
+        session["last_msg_time"] = now
+
+        # 2. DISMANTLE FIRST
         if session.get("todo_list"):
             item = session["todo_list"].pop(0)
-            session["last_action"] = "dismantle" 
-            session["current_task"] = item     # Save a "copy" for validation
-            session["last_item_attempted"] = item # Store for error checking
+            session["current_task"] = item
+            session["last_item_attempted"] = item 
+            return await channel.send(f"**{session['username'].capitalize()}** `rpg dismantle {item} all` !\n> ```rpg dismantle {item} all```")
 
-            # Combine strings and fix quote nesting
-            msg = (
-                f"**{session['username'].capitalize()}** `rpg dismantle {item} all` !\n"
-                f"> ```rpg dismantle {item} all```"
-            )
-            return await channel.send(msg)
-
-        # 2. TRADE SECOND: If nothing left to dismantle, start trading
+        # 3. TRADE SECOND
         if session.get("trade_list"):
-            tid = session["trade_list"].pop(0) # Change to pop(0) to match dismantle logic
-            session["current_task"] = tid      # Save the ID for validation
-            
+            tid = session["trade_list"].pop(0)
+            session["current_task"] = tid
             reverse_map = {"a": "normie fish", "b": "wooden log", "c": "apple", "d": "wooden log", "e": "ruby", "f": "wooden log"}
             session["last_item_attempted"] = reverse_map.get(tid)
-            session["last_action"] = "trade"
-            
-            msg = (
-                f"**{session['username'].capitalize()}** `rpg trade {tid} all` !\n"
-                f"> ```rpg trade {tid} all```"
-            )
-            return await channel.send(msg)
-        
-        # 3. GOAL REACHED
-        area_num = session.get("real_area", "?")
-        await channel.send(f"✅ **Optimized!** Area {area_num} finished.")
+            return await channel.send(f"**{session['username'].capitalize()}** `rpg trade {tid} all` !\n> ```rpg trade {tid} all```")
+
+        # 4. CRAFT/OVERFLOW THIRD
+        if session.get("craft_list"):
+            target, amt = session["craft_list"].pop(0)
+            session["current_task"] = target
+            if target == "ruby" and amt == "all":
+                session["current_task"] = "f"
+                return await channel.send(f"**{session['username'].capitalize()}** `rpg trade f all` !\n> ```rpg trade f all```")
+            return await channel.send(f"**{session['username'].capitalize()}** `rpg craft {target} {amt}` !\n> ```rpg craft {target} {amt}```")
+
+        # 5. FINISHED
+        await channel.send(f"✅ **Optimized!** Area {session.get('real_area', '?')} finished.")
         if uid in self.active_sessions:
             del self.active_sessions[uid]
 
@@ -421,56 +547,56 @@ class Trades(commands.Cog):
 
     async def refresh_tasks(self, uid, embed=None, virtual_update=None):
         session = self.active_sessions[uid]
-        guide = self.base_guides.get(session["logic_area"], {"dismantle": [], "trades": []})
+        logic_area = self.area_map.get(session["real_area"], session["real_area"])
+        guide = self.base_guides.get(logic_area, {"dismantle": [], "trades": []})
         
         # 1. UPDATE VIRTUAL INVENTORY
         if embed:
-            field_0_value = embed.fields[0].value.lower()
-            session["virtual_inv"]["wooden log"] = self.get_count("wooden log", field_0_value)
-            session["virtual_inv"]["normie fish"] = self.get_count("normie fish", field_0_value)
-            session["virtual_inv"]["apple"] = self.get_count("apple", field_0_value)
-            session["virtual_inv"]["ruby"] = self.get_count("ruby", field_0_value)
+            f0 = embed.fields[0].value.lower()
+            # List every single item the bot ever tracks
+            all_tracked_items = [
+                "wooden log", "normie fish", "apple", "ruby", "banana", 
+                "golden fish", "epic fish", "ultra log", "hyper log", 
+                "mega log", "super log", "epic log"
+            ]
             
-            for item in guide["dismantle"]:
-                session["virtual_inv"][item] = self.get_count(item, field_0_value)
+            # FORCE refresh: if it's not in the embed, it's 0.
+            for item in all_tracked_items:
+                count = self.get_count(item, f0)
+                session["virtual_inv"][item] = count
+                if count > 0:
+                    print(f"DEBUG: Sync {item} = {count}")
 
-        # 2. VIRTUAL UPDATE (From Trades)
         if virtual_update:
             gave_item, gave_amt, got_item, got_amt = virtual_update
-            if gave_item in session["virtual_inv"]:
-                session["virtual_inv"][gave_item] -= gave_amt
-            if got_item in session["virtual_inv"]:
-                session["virtual_inv"][got_item] += got_amt
+            session["virtual_inv"][gave_item] = max(0, session["virtual_inv"].get(gave_item, 0) - gave_amt)
+            session["virtual_inv"][got_item] = session["virtual_inv"].get(got_item, 0) + got_amt
 
-        # 3. REBUILD TODO LIST (Dismantle Chain)
-        # We always check if we have high-tier items to break down first
-        todos = []
-        for item in guide["dismantle"]:
-            if session["virtual_inv"].get(item, 0) > 0:
-                todos.append(item)
-        
-        # Priority 1: Dismantling (Highest to Lowest)
+        # 2. REBUILD TODO LIST (Dismantle)
+        # Only add to list if count is actually > 0 in virtual_inv
+        todos = [item for item in guide["dismantle"] if session["virtual_inv"].get(item, 0) > 0]
         session["todo_list"] = list(reversed(todos)) 
 
-        # 4. REBUILD TRADE QUEUE (Only if NO dismantling is left)
+        # 3. REBUILD TRADE QUEUE
         new_trades = []
-        if not session["todo_list"]: # This line is the "Gatekeeper"
+        if not session["todo_list"]:
             ratios = self.area_ratios.get(session["real_area"], {})
             for t_str in guide["trades"]:
                 parts = t_str.split(" to ")
-                source, target = parts[0], parts[1]
+                src, target = parts[0], parts[1]
+                key = f"log_to_{target}" if src == "log" else src
+                search_name = "wooden log" if src == "log" else "normie fish" if src == "fish" else src
                 
-                search_name = "wooden log" if source == "log" else "normie fish" if source == "fish" else source
-                key = f"log_to_{target}" if source == "log" else source
-                
-                required_amt = ratios.get(key, 1) if source == "log" else 1
-                if session["virtual_inv"].get(search_name, 0) >= required_amt:
+                if session["virtual_inv"].get(search_name, 0) >= ratios.get(key, 1):
                     tid = self.trade_ids.get(key)
                     if tid: new_trades.append(tid)
-        else:
-            print(f"DEBUG: Dismantle items found {session['todo_list']}. Blocking trade queue.")
-
         session["trade_list"] = new_trades
+
+        # 4. REBUILD CRAFT QUEUE
+        session["craft_list"] = []
+        if not session["todo_list"] and not session["trade_list"]:
+            overflow_tasks = self.get_overflow_tasks(session)
+            session["craft_list"] = overflow_tasks
 
 async def setup(bot):
     await bot.add_cog(Trades(bot))
